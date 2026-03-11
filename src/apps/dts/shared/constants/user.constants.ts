@@ -1,0 +1,1 @@
+export const DEFAULT_PASSWORD = 'Foxconn123@' as const;

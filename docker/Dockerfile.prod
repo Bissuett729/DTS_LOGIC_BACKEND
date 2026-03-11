@@ -1,0 +1,58 @@
+# ---------------------------------------------------------
+# STAGE 1: BUILDER
+# ---------------------------------------------------------
+FROM node:18-alpine AS builder
+
+# Define el directorio de trabajo
+WORKDIR /app
+
+# Instala dependencias necesarias para la compilación
+RUN apk add --no-cache --virtual .build-deps \
+    openssh \
+    sshpass \
+    bash
+
+# Copia y instala las dependencias necesarias para la compilación
+COPY package*.json ./
+COPY .env ./
+COPY env/development.env ./
+COPY env/production.env ./
+RUN npm ci
+
+# Copia el código fuente y el archivo necesario para swagger
+COPY . .
+RUN npm run build
+
+# Limpia dependencias innecesarias para producción
+RUN npm prune --production
+
+# ---------------------------------------------------------
+# STAGE 2: PRODUCTION
+# ---------------------------------------------------------
+FROM node:18-alpine AS production
+
+# Define el directorio de trabajo
+WORKDIR /app
+
+# Instala solo las herramientas necesarias
+RUN apk add --no-cache tzdata openssh sshpass bash \
+    && ln -sf /usr/share/zoneinfo/America/Ciudad_Juarez /etc/localtime \
+    && echo "America/Ciudad_Juarez" > /etc/timezone
+
+ENV TZ=America/Ciudad_Juarez
+ENV NODE_ENV=production
+
+# Copia los archivos necesarios desde el builder
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/node_modules ./node_modules
+
+# Copia los archivos .env
+COPY --from=builder /app/.env .env
+COPY --from=builder /app/env/development.env env/development.env
+COPY --from=builder /app/env/production.env env/production.env
+# Agrega node_modules/.bin al PATH
+ENV NODE_ENV=production
+
+# Define el comando para iniciar la aplicación
+CMD ["node", "dist/main.js"]

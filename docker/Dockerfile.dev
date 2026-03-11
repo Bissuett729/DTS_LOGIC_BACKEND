@@ -1,0 +1,15 @@
+FROM node:18-alpine
+
+# Instala dependencias necesarias para desarrollo
+RUN apk add --no-cache openssh sshpass bash
+
+WORKDIR /app
+
+# Copia solo package.json y package-lock.json para instalar dependencias
+COPY package*.json ./
+
+# Instala dependencias incluyendo las de desarrollo
+RUN npm install
+
+# Copia el resto del código
+COPY . .

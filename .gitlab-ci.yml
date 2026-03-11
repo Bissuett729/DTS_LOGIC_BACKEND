@@ -1,0 +1,121 @@
+stages:
+  - setup
+  - test
+  - build
+  - deploy
+  - rollback
+  - backup_server_deploy
+
+variables:
+  APP_VERSION: '$CI_COMMIT_TAG'
+  NETWORK_NAME: '$CI_PROJECT_NAME-network' # si depende de otra red remplazar por el nombre de la red
+
+setup-env:
+  stage: setup
+  tags:
+    - server37
+  script:
+    - echo "Cargando variables desde el servidor..."
+  artifacts:
+    reports:
+      dotenv: .env
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - when: never # Oculta el job si no es un tag
+
+test-job:
+  stage: test
+  tags:
+    - server37
+  script:
+    - echo "Running unit tests..."
+    - npm ci
+    - npm run test:cov -- --forceExit
+  coverage: '/Lines\s*:\s*(\d+\.?\d*)%/'
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+    paths:
+      - coverage/
+    expire_in: 7 days
+  allow_failure: false
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - when: never
+
+build-job:
+  stage: build
+  tags:
+    - server37
+  script:
+    - echo "Building the Docker images on server37..."
+    # Autenticación en el registro de GitLab
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    # Construir y etiquetar la imagen para el registro de GitLab
+    - docker build -f docker/Dockerfile.prod -t "$CI_REGISTRY_IMAGE":"$APP_VERSION" .
+    - echo "Pushing image to local registry..."
+    - docker push "$CI_REGISTRY_IMAGE":"$APP_VERSION"
+    - echo "FINISH BUILD STAGE..."
+    - echo "Cleaning up..."
+    - rm -rf $CI_PROJECT_DIR
+  allow_failure: false # No permite que
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - when: never # Oculta el job si no es un tag
+
+deploy-job:
+  stage: deploy
+  tags:
+    - server37
+  script:
+    - echo "Deploying the Docker image on server37..."
+    # Autenticación en el registro de GitLab
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    # Pull desde el registro de GitLab
+    - docker pull "$CI_REGISTRY_IMAGE":"$APP_VERSION"
+    # Ejecutar el contenedor
+    - docker compose -p "$CI_PROJECT_PATH_SLUG" --env-file env/production.env -f docker/docker-compose.gitlab.yml up app_prod -d
+    - echo "Cleaning up..."
+    - rm -rf $CI_PROJECT_DIR
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: manual # Solo se activa manualmente si el pipeline fue lanzado con un tag
+    - when: never # Oculta el job si no es un tag
+
+rollback-job:
+  stage: rollback
+  tags:
+    - server37
+  script:
+    - echo "Rolling back to version $ROLLBACK_VERSION..."
+    # Autenticación en el registro de GitLab
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    # Pull de la versión específica desde el registro de GitLab
+    - docker pull "$CI_REGISTRY_IMAGE":"$ROLLBACK_VERSION"
+    - APP_VERSION=$ROLLBACK_VERSION docker compose -p "$CI_PROJECT_PATH_SLUG" --env-file env/production.env -f docker/docker-compose.gitlab.yml up app_prod -d
+    - echo "Cleaning up..."
+    - rm -rf $CI_PROJECT_DIR
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: manual # Solo se activa manualmente si el pipeline fue lanzado con un tag
+    - when: never # Oculta el job si no es un tag
+
+backup_server_deploy-job:
+  stage: backup_server_deploy
+  tags:
+    - server46
+  script:
+    - echo "Deploying the Docker image on server46..."
+    # Autenticación en el registro de GitLab
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    # Pull desde el registro de GitLab
+    - docker pull "$CI_REGISTRY_IMAGE":"$APP_VERSION"
+    # Ejecutar el contenedor
+    - docker compose -p "$CI_PROJECT_PATH_SLUG" --env-file env/production.env -f docker/docker-compose.gitlab.yml up app_prod -d
+    - echo "Cleaning up..."
+    - rm -rf $CI_PROJECT_DIR
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: manual # Solo se activa manualmente si el pipeline fue lanzado con un tag
+    - when: never # Oculta el job si no es un tag

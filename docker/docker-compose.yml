@@ -1,0 +1,44 @@
+services:
+  app_dev:
+    container_name: "${CONTAINER_NAME}_DEV"
+    image: "${IMAGE_NAME}_dev:${IMAGE_TAG}"
+    build: 
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    ports:
+      - "${RUNNIN_PORT_DEV}:${RUNNIN_PORT_DEV}"
+      - "${MICROSERVICE_PORT_DEV}:${MICROSERVICE_PORT_DEV}"
+    env_file:
+      - ../env/development.env
+      - ../.env
+    environment:
+      - NODE_ENV=development
+      - TZ=America/Denver
+    volumes:
+      - ..:/app
+      - /app/node_modules
+      - ${LOGS_PATH}:${LOGS_PATH}
+      - ${CTS_RACKSCAN_PATH}:${CTS_RACKSCAN_PATH}
+    restart: always
+    command: ["npm", "run", "start:dev"]
+
+  app_prod:
+    container_name: "${CONTAINER_NAME}_PROD"
+    image: "${IMAGE_NAME}_prod:${IMAGE_TAG}"
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.prod
+    ports:
+      - "${RUNNIN_PORT_PROD}:${RUNNIN_PORT_PROD}"
+      - "${MICROSERVICE_PORT_PROD}:${MICROSERVICE_PORT_PROD}"
+    env_file:
+      - ../env/production.env
+      - ../.env
+    environment:
+      - NODE_ENV=production
+      - TZ=America/Denver
+    volumes:
+      - ${LOGS_PATH}:${LOGS_PATH}
+      - ${CTS_RACKSCAN_PATH}:${CTS_RACKSCAN_PATH}
+    restart: always
+    command: ["node", "dist/main.js"]

@@ -1,0 +1,22 @@
+services:
+  app_prod:
+    container_name: "${CONTAINER_NAME}_PROD"
+    image: "$CI_REGISTRY_IMAGE:$APP_VERSION"
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.prod
+    ports:
+      - "${RUNNING_PORT}:${RUNNING_PORT}"
+      - "${MICROSERVICE_PORT}:${MICROSERVICE_PORT}"
+    env_file:
+      - ../env/production.env
+    environment:
+      NODE_ENV: production
+      TZ: "America/Ciudad_Juarez"
+    restart: always
+    command: [ "node", "--max-old-space-size=8192", "dist/main.js" ]
+    networks:
+      - "app_network"
+
+networks:
+  app_network: {}
