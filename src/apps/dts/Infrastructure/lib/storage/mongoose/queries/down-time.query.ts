@@ -203,18 +203,42 @@ export class DownTimeQuery implements IDownTimeRepository {
         if (filters?.line)  matchBase['line']  = filters.line;
         if (filters?.stage) matchBase['stage'] = filters.stage;
 
-        // Approximate current ISO week number
-        const now         = new Date();
-        const startOfYear = new Date(now.getFullYear(), 0, 1);
-        const currentWeek = Math.ceil(((now.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
+        // ── Identical Monday-boundary logic as getDashboardStats ────────────
+        const now       = new Date();
+        const dow       = now.getDay() === 0 ? 7 : now.getDay(); // ISO Mon=1…Sun=7
+        const weekStart = new Date(now);
+        weekStart.setDate(now.getDate() - dow + 1);
+        weekStart.setHours(0, 0, 0, 0);
+
+        const prevWeekStart = new Date(weekStart);
+        prevWeekStart.setDate(weekStart.getDate() - 7);
+
+        const rangeStart = new Date(weekStart);
+        rangeStart.setDate(weekStart.getDate() - (numWeeks - 1) * 7);
+
+        const currentWeek = this.isoWeekNumber(weekStart);
         const weeksRange  = Array.from({ length: numWeeks }, (_, i) => currentWeek - (numWeeks - 1) + i);
+
+        // Assign week number using the same Monday boundary (weekStart) that
+        // getDashboardStats uses for its $gte filter, so both totals are identical.
+        //   weekNum = currentWeek + floor((startTime − weekStart) / 7 days)
+        // Records >= weekStart   → floor(0…0.99) = 0 → currentWeek     ✓
+        // Records in prev week   → floor(-1…-0.01) = -1 → currentWeek-1 ✓
+        const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+        const weekNumExpr = {
+            $add: [
+                currentWeek,
+                { $floor: { $divide: [{ $subtract: ['$startTime', weekStart] }, MS_PER_WEEK] } },
+            ],
+        };
 
         const [weeklyData, causeTrends] = await Promise.all([
             // ── Weekly totals ──────────────────────────────────────────────────
             this.downTimeModel.aggregate([
-                { $match: { ...matchBase, week: { $in: weeksRange } } },
+                { $match: { ...matchBase, startTime: { $gte: rangeStart } } },
+                { $addFields: { weekNum: weekNumExpr } },
                 { $group: {
-                    _id:             '$week',
+                    _id:             '$weekNum',
                     totalDt:         { $sum: '$downTimeGenerated' },
                     totalReported:   { $sum: '$downTimeReported' },
                     totalUnreported: { $sum: '$downTimeUnreported' },
@@ -223,13 +247,14 @@ export class DownTimeQuery implements IDownTimeRepository {
                 } },
                 { $sort: { _id: 1 } },
             ]),
-            // ── Cause trends: current vs prev week ────────────────────────────
+            // ── Cause trends: current vs prev week ─────────────────────────────
             this.downTimeModel.aggregate([
-                { $match: { ...matchBase, week: { $in: [currentWeek, currentWeek - 1] } } },
+                { $match: { ...matchBase, startTime: { $gte: prevWeekStart } } },
+                { $addFields: { weekNum: weekNumExpr } },
                 { $unwind: { path: '$classification', preserveNullAndEmptyArrays: false } },
                 ...(filters?.dept ? [{ $match: { 'classification.department': filters.dept } }] : []),
                 { $group: {
-                    _id: { week: '$week', reason: '$classification.reason', dept: '$classification.department' },
+                    _id: { week: '$weekNum', reason: '$classification.reason', dept: '$classification.department' },
                     totalDt: { $sum: '$classification.downTimeGenerated' },
                 } },
                 { $group: {
@@ -242,5 +267,14 @@ export class DownTimeQuery implements IDownTimeRepository {
         ]);
 
         return { weeklyData, causeTrends, currentWeek, weeksRange };
+    }
+
+    /** ISO 8601 week number — identical to MongoDB's $isoWeek operator. */
+    private isoWeekNumber(date: Date): number {
+        const d = new Date(date);
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+        const yearStart = new Date(d.getFullYear(), 0, 1);
+        return Math.ceil(((d.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
     }
 }
